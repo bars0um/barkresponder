@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Pro-audio dark palette -->
+    <color name="bg_primary">#121212</color>
+    <color name="bg_card">#1E1E1E</color>
+    <color name="accent">#FF6D00</color>
+    <color name="accent_light">#FFB300</color>
+    <color name="text_primary">#FFFFFF</color>
+    <color name="text_secondary">#B0B0B0</color>
+    <color name="text_hint">#707070</color>
+    <color name="state_idle">#FF5252</color>
+    <color name="state_active">#69F0AE</color>
+    <color name="state_alert">#FFD740</color>
+    <color name="btn_bg">#FF6D00</color>
+    <color name="btn_text">#000000</color>
+
+    <!-- Legacy compat -->
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+</resources>

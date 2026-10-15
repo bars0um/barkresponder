@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="48dp"
+    android:height="48dp"
+    android:viewportWidth="120"
+    android:viewportHeight="120">
+
+    <!-- Center dot (the source) -->
+    <path
+        android:fillColor="#FF6D00"
+        android:pathData="M50,60 a10,10 0 1,0 20,0 a10,10 0 1,0 -20,0" />
+
+    <!-- Inner arc (r=20, 120° span, right-facing) -->
+    <path
+        android:strokeColor="#FF6D00"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M70,42.68 A20,20 0 0,1 70,77.32" />
+
+    <!-- Middle arc (r=34, 120° span, right-facing) -->
+    <path
+        android:strokeColor="#FF6D00"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M77,30.56 A34,34 0 0,1 77,89.44" />
+
+    <!-- Outer arc (r=48, 120° span, right-facing) -->
+    <path
+        android:strokeColor="#FF6D00"
+        android:strokeWidth="6"
+        android:strokeLineCap="round"
+        android:fillColor="@android:color/transparent"
+        android:pathData="M84,18.43 A48,48 0 0,1 84,101.57" />
+
+</vector>
