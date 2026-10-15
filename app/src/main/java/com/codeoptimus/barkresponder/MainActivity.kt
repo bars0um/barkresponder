@@ -1454,6 +1454,10 @@ class MainActivity : Activity() {
         else setState("mic permission denied")
     }
     private fun startListen() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            setState("mic permission needed")
+            return
+        }
         listening = true
         updateListenButtons()
         setState("listening")
