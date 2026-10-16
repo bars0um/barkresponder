@@ -30,6 +30,7 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import java.io.File
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -114,6 +115,11 @@ class MainActivity : Activity() {
     @Volatile private var listenSession: AtomicBoolean? = null
     @Volatile private var barkMinScore = 0.4f  // YAMNet Bark score needed to respond; 0 turns the check off
     @Volatile private var triggerCount = 0
+    @Volatile private var saveClips = true   // keep a clip of each candidate for labelling
+    private val sampleStore: SampleStore
+        get() = synchronized(MainActivity) {
+            sharedStore ?: SampleStore(File(filesDir, SampleStore.DIR_NAME)).also { sharedStore = it }
+        }
 
     // response mode (simple screen)
     @Volatile private var responseMode: ResponseMode = ResponseMode.IMPULSE
@@ -634,6 +640,7 @@ class MainActivity : Activity() {
         cooldownMs = prefs.getInt("cooldownMs", 100)
         sustainMs  = prefs.getInt("sustainMs", 150)
         barkMinScore = prefs.getFloat("barkMinScore", 0.4f).coerceIn(0f, 1f)
+        saveClips    = prefs.getBoolean("saveClips", true)
         gsIntensity  = prefs.getFloat("gsIntensity", 0.9f).toDouble()
         gsBoomFreq   = prefs.getFloat("gsBoomFreq", 50.0f).toDouble()
         gsBoomTail   = prefs.getFloat("gsBoomTail", 0.45f).toDouble()
@@ -671,6 +678,7 @@ class MainActivity : Activity() {
             putInt("cooldownMs", cooldownMs)
             putInt("sustainMs", sustainMs)
             putFloat("barkMinScore", barkMinScore)
+            putBoolean("saveClips", saveClips)
             putFloat("gsIntensity", gsIntensity.toFloat())
             putFloat("gsBoomFreq", gsBoomFreq.toFloat())
             putFloat("gsBoomTail", gsBoomTail.toFloat())
@@ -1513,11 +1521,9 @@ class MainActivity : Activity() {
                 }
             }
             scorer.execute { try { loadedClassifier() } catch (_: Throwable) {} }
-            val barkCheck = BarkCheck(
-                ring, { barkMinScore }, scorer,
-                { window -> loadedClassifier().classify(Resampler.toModelInput(window))[YamnetClassifier.BARK] },
-                { active.get() },
-            ) { respond, lastSound ->
+            val score = { window: ShortArray -> loadedClassifier().classify(Resampler.toModelInput(window)) }
+            val clips = ClipCapture(ring, { saveClips }, scorer, score, sampleStore, clipWriter)
+            val barkCheck = BarkCheck(ring, { barkMinScore }, scorer, score, { active.get() }, clips) { respond, lastSound ->
                 if (respond) respondToSound()
                 showLastSound(lastSound)
             }
@@ -1558,6 +1564,7 @@ class MainActivity : Activity() {
                     val ownSound = ownSounds.get() > 0
                     ring.append(b, n, ownSound)
                     barkCheck.afterAppend()
+                    clips.afterAppend()
                     if (ownSound) {
                         // ignore our own output so the trigger can't chain on itself
                         runOnUiThread { micLevel.progress = 0 }
@@ -1618,5 +1625,12 @@ class MainActivity : Activity() {
         super.onDestroy(); playing = false; listening = false
         listenSession?.set(false)
         stopKeepAlive()
+    }
+
+    // One store and one clip writer per process: a rotation makes a new
+    // Activity, and two stores would each keep their own lock and list.
+    private companion object {
+        private var sharedStore: SampleStore? = null
+        private val clipWriter = Executors.newSingleThreadExecutor()   // clip writes, off the classifier thread
     }
 }
