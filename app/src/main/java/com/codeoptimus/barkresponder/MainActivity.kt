@@ -21,6 +21,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -1400,25 +1401,13 @@ class MainActivity : Activity() {
     // ---------- one-shot melody (jingle) ----------
     private fun playMelody() {
         val s = Melody.render(toneFreq, amp, sampleRate)
-        val totalSec = Melody.seconds
-
         thread {
             ownSounds.incrementAndGet()
             try {
-                val minBytes = AudioTrack.getMinBufferSize(
-                    sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
-                )
-                val track = AudioTrack(
-                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
-                    AudioFormat.Builder().setSampleRate(sampleRate)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build(),
-                    maxOf(minBytes, s.size * 2), AudioTrack.MODE_STATIC, AudioManager.AUDIO_SESSION_ID_GENERATE
-                )
-                track.write(s, 0, s.size)
-                track.play()
-                Thread.sleep((totalSec * 1000).toLong() + 100)
+                PcmPlayer.play(s, sampleRate)
+            } catch (t: Throwable) {
+                // An audio error (no free player, say) skips this melody instead of killing the app.
+                Log.w("MainActivity", "melody did not play", t)
             } finally {
                 Thread.sleep(150)
                 ownSounds.decrementAndGet()
