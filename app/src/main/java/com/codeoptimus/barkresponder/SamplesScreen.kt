@@ -38,6 +38,7 @@ class SamplesScreen(
     private val setSaveClips: (Boolean) -> Unit,
     private val onBack: () -> Unit,
     private val onExport: () -> Unit,
+    private val setRemote: (Boolean) -> Unit,
 ) {
     private val io = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
@@ -52,6 +53,9 @@ class SamplesScreen(
     private val empty: TextView
     private val adapter = ClipAdapter()
     private val saveSwitch: Switch
+    private val remoteSwitch: Switch
+    private val remoteInfo: TextView
+    private var showingRemote = false
 
     val view: View
 
@@ -97,6 +101,15 @@ class SamplesScreen(
             textSize = 12f
             setPadding(0, 0, 0, 4.dp())
         })
+        remoteSwitch = switch("Remote access") { on -> if (!showingRemote) setRemote(on) }
+        root.addView(remoteSwitch)
+        remoteInfo = TextView(activity).apply {
+            setTextColor(color(R.color.text_hint))
+            textSize = 12f
+            setPadding(0, 0, 0, 4.dp())
+        }
+        root.addView(remoteInfo)
+        showRemote(RemoteAccess.State.Off)
         root.addView(switch("Responded only") { on -> respondedOnly = on; applyFilter() })
 
         val actions = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
@@ -127,6 +140,28 @@ class SamplesScreen(
     fun reload() {
         saveSwitch.isChecked = saveClips()
         io.execute { show(store.list()) }
+    }
+
+    /** Sets the Remote access switch and its line to the server's state, without calling [setRemote]. */
+    fun showRemote(state: RemoteAccess.State) {
+        showingRemote = true
+        remoteSwitch.isChecked = state is RemoteAccess.State.On
+        showingRemote = false
+        when (state) {
+            is RemoteAccess.State.On -> {
+                remoteInfo.text = "Open ${state.urls.joinToString(" or ")} on a computer on this Wi-Fi. " +
+                    "Anyone on this Wi-Fi can open it while this is on."
+                remoteInfo.setTextColor(color(R.color.state_active))
+            }
+            is RemoteAccess.State.Failed -> {
+                remoteInfo.text = state.message
+                remoteInfo.setTextColor(color(R.color.state_idle))
+            }
+            RemoteAccess.State.Off -> {
+                remoteInfo.text = "Lets a computer on this Wi-Fi play, label, delete and download clips."
+                remoteInfo.setTextColor(color(R.color.text_hint))
+            }
+        }
     }
 
     fun stopPlayback() {
