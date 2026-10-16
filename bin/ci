@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Runs every check CI would: JVM unit tests, Android lint, the debug APK and
 # the instrumented-test APK. Instrumented tests themselves need a device:
-# run `./gradlew connectedDebugAndroidTest` with an arm64 or x86_64 device attached.
+# run bin/device-test with an arm64 or x86_64 device attached.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
