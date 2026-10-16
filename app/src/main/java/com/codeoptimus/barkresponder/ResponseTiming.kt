@@ -1,5 +1,7 @@
 package com.codeoptimus.barkresponder
 
+import kotlin.math.ceil
+
 /** How long each response plays, so the trigger can hold off new sounds until it ends. */
 object ResponseTiming {
     /**
@@ -7,7 +9,7 @@ object ResponseTiming {
      * Gunshot share it.
      */
     fun lengthMs(mode: ResponseMode, impulseMs: Long): Long = when (mode) {
-        ResponseMode.MELODY -> 4200L
+        ResponseMode.MELODY -> ceil(Melody.seconds * 1000).toLong()
         else -> impulseMs
     }
 }
