@@ -12,8 +12,10 @@ class BarkCheckTest {
     private var active = true
     private var scoreFn: (ShortArray) -> Float = { 0.9f }
 
+    private fun scores(bark: Float) = FloatArray(521) { if (it == YamnetClassifier.BARK) bark else 0f }
+
     private fun check(executor: Executor = Executor { it.run() }) = BarkCheck(
-        ring, { minScore }, executor, { scoreFn(it) }, { active },
+        ring, { minScore }, executor, { scores(scoreFn(it)) }, { active },
     ) { respond, text -> results += respond to text }
 
     // Appends `count` samples, then lets the check look for a due window.

@@ -42,4 +42,21 @@ class AudioRing(private val capacity: Int = 3 * Resampler.IN_RATE) {
         if (ownSpans.any { it.first < end && it.last >= start }) return null
         return ShortArray(length) { data[((start + it) % capacity).toInt()] }
     }
+
+    /**
+     * Like [window], but samples recorded while our own response played come
+     * back as silence instead of making the whole clip null.
+     */
+    @Synchronized
+    fun clip(start: Long, length: Int): ShortArray? {
+        val end = start + length
+        if (start < 0 || start < written - capacity || end > written) return null
+        val out = ShortArray(length) { data[((start + it) % capacity).toInt()] }
+        for (span in ownSpans) {
+            val from = maxOf(span.first, start)
+            val to = minOf(span.last + 1, end)
+            for (i in from until to) out[(i - start).toInt()] = 0
+        }
+        return out
+    }
 }

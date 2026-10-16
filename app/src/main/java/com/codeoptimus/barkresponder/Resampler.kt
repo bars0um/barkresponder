@@ -31,7 +31,10 @@ object Resampler {
         DoubleArray(TAPS) { h[it] / sum }
     }
 
-    fun toModelInput(samples: ShortArray): FloatArray {
+    fun toModelInput(samples: ShortArray): FloatArray = resample(samples, MODEL_SAMPLES)
+
+    /** [count] samples at 16 kHz from the start of [samples]; zeros past their end. */
+    fun resample(samples: ShortArray, count: Int): FloatArray {
         val half = TAPS / 2
         val filtered = DoubleArray(samples.size) { i ->
             var acc = 0.0
@@ -42,7 +45,7 @@ object Resampler {
             acc / 32768.0
         }
         val step = IN_RATE.toDouble() / OUT_RATE
-        return FloatArray(MODEL_SAMPLES) { i ->
+        return FloatArray(count) { i ->
             val pos = i * step
             val j = pos.toInt()
             val y = when {

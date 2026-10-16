@@ -60,4 +60,14 @@ class ResamplerTest {
         assertEquals(15_600, Resampler.toModelInput(ShortArray(1_000)).size)
         assertEquals(15_600, Resampler.toModelInput(ShortArray(88_200)).size)
     }
+    @Test
+    fun `resamples a 2 s clip of 88200 samples to 32000 at 1 kHz`() {
+        val out = Resampler.resample(sine(1000.0, 88_200), 32_000)
+
+        assertEquals(32_000, out.size)
+        for (i in listOf(100, 16_000, 31_000)) {
+            val expected = 0.5 * sin(2 * PI * 1000.0 * (i * 2.75625) / 44_100.0)
+            assertEquals(expected, out[i].toDouble(), 0.01)
+        }
+    }
 }

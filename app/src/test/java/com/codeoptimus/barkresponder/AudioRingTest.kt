@@ -68,4 +68,26 @@ class AudioRingTest {
 
         assertEquals(3 * 44_100, ring.window(2 * 44_100L, 3 * 44_100)!!.size)
     }
+    @Test
+    fun `a clip keeps the samples around our own sound and silences that sound`() {
+        val ring = AudioRing()
+        ring.feed(20_000)
+        ring.feed(5_000, ownSound = true)
+        ring.feed(20_000)
+
+        val clip = ring.clip(15_000, 20_000)!!
+        val want = expected(15_000, 20_000)
+        for (i in 5_000 until 10_000) want[i] = 0
+        assertArrayEquals(want, clip)
+    }
+
+    @Test
+    fun `a clip is null when it is older than the ring holds or not yet recorded`() {
+        val ring = AudioRing()
+        ring.feed(4 * 44_100)
+
+        assertNull(ring.clip(44_100 - 1, 1_000))
+        assertNull(ring.clip(4 * 44_100L - 500, 1_000))
+        assertArrayEquals(expected(44_100, 1_000), ring.clip(44_100, 1_000))
+    }
 }
