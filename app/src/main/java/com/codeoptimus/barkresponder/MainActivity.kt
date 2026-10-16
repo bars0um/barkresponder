@@ -1398,51 +1398,9 @@ class MainActivity : Activity() {
     }
 
     // ---------- one-shot melody (jingle) ----------
-    //
-    // Plays a fixed, recognizable tune ("Ode to Joy") anchored on the current
-    // whistle frequency. Each note is a whole-number of semitones away from the
-    // center, so the melody keeps its shape no matter where the whistle slider
-    // is — the notes simply spread out symmetrically around that center, staying
-    // near the range the user has chosen.
     private fun playMelody() {
-        // (semitones relative to center, duration in 8th-note units)
-        val notes = intArrayOf(
-            4, 4, 5, 7, 7, 5, 4, 2,   // E E F G G F E D
-            0, 0, 2, 4, 4, 2, 2        // C C D E E D D
-        )
-        val durs = intArrayOf(
-            1, 1, 1, 1, 1, 1, 2, 1,   // last E held a beat
-            1, 1, 1, 2, 1, 1, 2        // phrases end on 2-beat notes
-        )
-        val center = toneFreq
-        val unitSec = 0.22                 // one 8th note
-        val restSec = 0.04                 // short gap between notes
-        val noteSecs = durs.map { it * unitSec }
-        val totalSec = noteSecs.sum() + (notes.size - 1) * restSec + 0.15
-
-        val n = (totalSec * sampleRate).toInt()
-        val s = ShortArray(n)
-        var tCursor = 0.0
-        for (k in notes.indices) {
-            val f = center * 2.0.pow(notes[k] / 12.0)
-            val dur = noteSecs[k]
-            val attack = 0.01
-            val release = 0.08
-            for (i in 0 until (dur * sampleRate).toInt()) {
-                val gi = (tCursor.toLong() + i).toInt() // global sample index
-                if (gi >= n) break
-                val t = i.toDouble() / sampleRate
-                val env = when {
-                    t < attack -> t / attack
-                    t > dur - release -> (dur - t) / release
-                    else -> 1.0
-                }
-                // fundamental + a light 2nd harmonic for a whistly timbre
-                val wave = sin(TAU * f * t) + 0.25 * sin(2.0 * TAU * f * t)
-                s[gi] = (wave * env * amp * 0.72 * Short.MAX_VALUE / 1.25).toInt().toShort()
-            }
-            tCursor += (dur * sampleRate).toLong() + (restSec * sampleRate).toLong()
-        }
+        val s = Melody.render(toneFreq, amp, sampleRate)
+        val totalSec = Melody.seconds
 
         thread {
             ownSounds.incrementAndGet()
@@ -1700,8 +1658,8 @@ class MainActivity : Activity() {
     // Plays the response and holds off new candidates until it and the cooldown end.
     private fun respondToSound() {
         val now = SystemClock.elapsedRealtime()
-        val seqMs = if (responseMode == ResponseMode.MELODY) 4200L
-            else (maxOf(strikeCount, 1) * (gapBase + gapRand + boomDecay * 1500 + 200)).toLong()
+        val impulseMs = (maxOf(strikeCount, 1) * (gapBase + gapRand + boomDecay * 1500 + 200)).toLong()
+        val seqMs = ResponseTiming.lengthMs(responseMode, impulseMs)
         suppressUntil = now + seqMs + cooldownMs
         triggerCount++
         val count = triggerCount
