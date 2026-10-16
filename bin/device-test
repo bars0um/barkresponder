@@ -1,0 +1,15 @@
+#!/usr/bin/env bash
+# Runs the instrumented tests on the attached device and exits 0 only when
+# the runner prints "OK (N tests)". Use it while `./gradlew connectedDebugAndroidTest`
+# misreports: AGP 9.4.0 fails that task for any adb-over-Wi-Fi device
+# (a serial with a colon, like 192.168.0.127:5555) even when every test passes.
+# It leaves both APKs installed; the Gradle task refuses to install over
+# them, so uninstall both before running that task again.
+# Set ANDROID_SERIAL when more than one device is attached.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+./gradlew -q installDebug installDebugAndroidTest
+out=$(adb shell am instrument -w -r com.codeoptimus.barkresponder.test/androidx.test.runner.AndroidJUnitRunner)
+echo "$out" | grep -E '^(OK|FAILURES|Tests run|INSTRUMENTATION_(FAILED|CODE)|INSTRUMENTATION_STATUS: measurement=|Error)' || true
+echo "$out" | grep -q '^OK (' || { echo "instrumented tests failed" >&2; exit 1; }

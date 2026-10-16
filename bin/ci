@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Runs every check CI would: JVM unit tests, Android lint, the debug APK and
+# the instrumented-test APK. Instrumented tests themselves need a device:
+# run bin/device-test with an arm64 or x86_64 device attached.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+
+echo "java: $(java -version 2>&1 | head -1)"
+./gradlew --version | grep -E '^(Gradle|Kotlin|JVM)'
+echo "AGP: $(grep -E '^agp' gradle/libs.versions.toml | cut -d'"' -f2)"
+echo "Kotlin plugin: $(grep -E '^kotlin =' gradle/libs.versions.toml | cut -d'"' -f2)"
+
+./gradlew --stacktrace testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
+
+# A suite that never ran reports no failures; count the tests that did.
+results=app/build/test-results/testDebugUnitTest
+tests=$(cat "$results"/*.xml 2>/dev/null | grep -o '<testcase ' | wc -l)
+echo "unit tests run: $tests"
+if [ "$tests" -eq 0 ]; then echo "no unit tests ran" >&2; exit 1; fi

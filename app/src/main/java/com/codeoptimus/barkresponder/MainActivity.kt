@@ -30,7 +30,9 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.concurrent.thread
 import kotlin.random.Random
 import kotlin.math.PI
@@ -105,8 +107,13 @@ class MainActivity : Activity() {
     @Volatile private var cooldownMs = 100   // short: a rapid woof-woof-woof fires on each bark
     @Volatile private var sustainMs = 150   // level must hold above threshold this long (rejects single blips)
     @Volatile private var suppressUntil = 0L
-    @Volatile private var boomActive = false  // mic is gated off while booms are playing
-    private var triggerCount = 0
+    // Responses playing now; the mic ignores what it hears while any plays. A count,
+    // not a flag, so one response ending doesn't unmark another still playing.
+    private val ownSounds = AtomicInteger(0)
+    // Cleared when this listening session stops, so its late work can't act in the next one.
+    @Volatile private var listenSession: AtomicBoolean? = null
+    @Volatile private var barkMinScore = 0.4f  // YAMNet Bark score needed to respond; 0 turns the check off
+    @Volatile private var triggerCount = 0
 
     // response mode (simple screen)
     @Volatile private var responseMode: ResponseMode = ResponseMode.IMPULSE
@@ -118,6 +125,7 @@ class MainActivity : Activity() {
     private lateinit var stateLbl: TextView
     private lateinit var micLevel: ProgressBar
     private lateinit var countLbl: TextView
+    private lateinit var lastSoundLbl: TextView
     private lateinit var impToggleBtn: Button
     private lateinit var whistleToggleBtn: Button
     private lateinit var melodyToggleBtn: Button
@@ -224,6 +232,16 @@ class MainActivity : Activity() {
             setPadding(0, 12.dp(), 0, 0)
         }
         simpleRoot.addView(countLbl)
+
+        // 5b. Why the last sound did or didn't get a response
+        lastSoundLbl = TextView(this).apply {
+            text = "Last sound: none yet"
+            textSize = 13f
+            setTextColor(context.getColor(R.color.text_secondary))
+            gravity = Gravity.CENTER
+            setPadding(0, 4.dp(), 0, 0)
+        }
+        simpleRoot.addView(lastSoundLbl)
 
         // 6. BIG LISTEN BUTTON
         simpleListenBtn = Button(this).apply {
@@ -555,6 +573,9 @@ class MainActivity : Activity() {
         val suLbl = settingLabel(trigCard, "Hold time (sustain): ${sustainMs} ms",
             "How long the sound must stay above the trigger line before it fires. Shorter = each bark can trigger; longer = only a sustained bark.")
         trigCard.addView(slider(100, 2000, sustainMs.coerceIn(100, 2000)) { v -> sustainMs = v; suLbl.text = "Hold time (sustain): $v ms"; saveSettings() })
+        val bcLbl = settingLabel(trigCard, "Bark confidence: ${(barkMinScore * 100).toInt()}%",
+            "How sure the app must be that a sound is a bark before it responds. 0% turns the check off: any loud sound fires, as before.")
+        trigCard.addView(slider(0, 100, (barkMinScore * 100).toInt()) { v -> barkMinScore = v / 100f; bcLbl.text = "Bark confidence: $v%"; saveSettings() })
         val cdLbl = settingLabel(trigCard, "Min gap between triggers: ${cooldownMs} ms",
             "Quiet period after a trigger before the app will fire again. Shorter lets a rapid woof-woof-woof fire on each bark.")
         trigCard.addView(slider(100, 5000, cooldownMs.coerceIn(100, 5000)) { v -> cooldownMs = v; cdLbl.text = "Min gap between triggers: $v ms"; saveSettings() })
@@ -612,6 +633,7 @@ class MainActivity : Activity() {
         threshold  = prefs.getFloat("threshold", 20.0f).toDouble()
         cooldownMs = prefs.getInt("cooldownMs", 100)
         sustainMs  = prefs.getInt("sustainMs", 150)
+        barkMinScore = prefs.getFloat("barkMinScore", 0.4f).coerceIn(0f, 1f)
         gsIntensity  = prefs.getFloat("gsIntensity", 0.9f).toDouble()
         gsBoomFreq   = prefs.getFloat("gsBoomFreq", 50.0f).toDouble()
         gsBoomTail   = prefs.getFloat("gsBoomTail", 0.45f).toDouble()
@@ -648,6 +670,7 @@ class MainActivity : Activity() {
             putFloat("threshold", threshold.toFloat())
             putInt("cooldownMs", cooldownMs)
             putInt("sustainMs", sustainMs)
+            putFloat("barkMinScore", barkMinScore)
             putFloat("gsIntensity", gsIntensity.toFloat())
             putFloat("gsBoomFreq", gsBoomFreq.toFloat())
             putFloat("gsBoomTail", gsBoomTail.toFloat())
@@ -1075,7 +1098,7 @@ class MainActivity : Activity() {
         }
 
         thread {
-            boomActive = true
+            ownSounds.incrementAndGet()
             try {
                 for (sk in strikes) {
                     Thread.sleep(sk.gapMs)
@@ -1109,7 +1132,7 @@ class MainActivity : Activity() {
             } finally {
                 // let the last tail fully decay before the mic listens again
                 Thread.sleep(150)
-                boomActive = false
+                ownSounds.decrementAndGet()
             }
         }
     }
@@ -1195,7 +1218,7 @@ class MainActivity : Activity() {
         }
 
         thread {
-            boomActive = true
+            ownSounds.incrementAndGet()
             try {
                 val minBytes = AudioTrack.getMinBufferSize(
                     sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -1215,7 +1238,7 @@ class MainActivity : Activity() {
                 try { track.stop(); track.release() } catch (_: Exception) {}
             } finally {
                 Thread.sleep(150)
-                boomActive = false
+                ownSounds.decrementAndGet()
             }
         }
     }
@@ -1237,7 +1260,7 @@ class MainActivity : Activity() {
         val level = amp * whistleVol
 
         thread {
-            boomActive = true
+            ownSounds.incrementAndGet()
             try {
                 for (rep in 0 until reps) {
                     // each repeat lands at a slightly different random pitch around the set value
@@ -1269,7 +1292,7 @@ class MainActivity : Activity() {
                 }
             } finally {
                 Thread.sleep(150)
-                boomActive = false
+                ownSounds.decrementAndGet()
             }
         }
     }
@@ -1322,7 +1345,7 @@ class MainActivity : Activity() {
         }
 
         thread {
-            boomActive = true
+            ownSounds.incrementAndGet()
             try {
                 val minBytes = AudioTrack.getMinBufferSize(
                     sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
@@ -1340,7 +1363,7 @@ class MainActivity : Activity() {
                 Thread.sleep((totalSec * 1000).toLong() + 100)
             } finally {
                 Thread.sleep(150)
-                boomActive = false
+                ownSounds.decrementAndGet()
             }
         }
     }
@@ -1440,6 +1463,7 @@ class MainActivity : Activity() {
     private fun toggleListen() {
         if (listening) {
             listening = false
+            listenSession?.set(false)
             updateListenButtons()
             setState("idle")
             runOnUiThread { micLevel.progress = 0 }
@@ -1454,7 +1478,14 @@ class MainActivity : Activity() {
         else setState("mic permission denied")
     }
     private fun startListen() {
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            setState("mic permission needed")
+            return
+        }
         listening = true
+        val active = AtomicBoolean(true)
+        listenSession?.set(false)
+        listenSession = active
         updateListenButtons()
         setState("listening")
         startKeepAlive()
@@ -1464,6 +1495,33 @@ class MainActivity : Activity() {
             val rec = AudioRecord(MediaRecorder.AudioSource.MIC, sampleRate,
                 AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, minBuf * 2)
             val b = ShortArray(minBuf)
+
+            // Bark check: every buffer goes into the ring; a loud onset waits until its
+            // window is recorded, then YAMNet scores it on the scorer thread.
+            val ring = AudioRing()
+            val scorer = Executors.newSingleThreadExecutor()
+            var classifier: YamnetClassifier? = null   // touched only on the scorer thread
+            var loadFailed = false                     // one failed load is enough per session
+            fun loadedClassifier(): YamnetClassifier {
+                classifier?.let { return it }
+                check(!loadFailed) { "the bark classifier failed to load" }
+                return try {
+                    YamnetClassifier(assets).also { classifier = it }
+                } catch (t: Throwable) {
+                    loadFailed = true
+                    throw t
+                }
+            }
+            scorer.execute { try { loadedClassifier() } catch (_: Throwable) {} }
+            val barkCheck = BarkCheck(
+                ring, { barkMinScore }, scorer,
+                { window -> loadedClassifier().classify(Resampler.toModelInput(window))[YamnetClassifier.BARK] },
+                { active.get() },
+            ) { respond, lastSound ->
+                if (respond) respondToSound()
+                showLastSound(lastSound)
+            }
+            var onsetSample = 0L
 
             // 1-pole bandpass: 200 Hz highpass + 5 kHz lowpass (bark frequency band)
             val hpAlpha = 1.0 / (1.0 + TAU * 200.0 / sampleRate)
@@ -1475,7 +1533,7 @@ class MainActivity : Activity() {
 
             try {
                 rec.startRecording()
-                while (listening) {
+                while (active.get()) {
                     val n = rec.read(b, 0, b.size); if (n <= 0) continue
 
                     // Apply bandpass filter, compute RMS on filtered signal
@@ -1497,7 +1555,10 @@ class MainActivity : Activity() {
                     val attackRatio = if (emaLevel > 0.001) rawLvl / (emaLevel + 0.001) else 1.0
 
                     val now = SystemClock.elapsedRealtime()
-                    if (boomActive) {
+                    val ownSound = ownSounds.get() > 0
+                    ring.append(b, n, ownSound)
+                    barkCheck.afterAppend()
+                    if (ownSound) {
                         // ignore our own output so the trigger can't chain on itself
                         runOnUiThread { micLevel.progress = 0 }
                         continue
@@ -1509,7 +1570,10 @@ class MainActivity : Activity() {
                     val releaseLvl = threshold * 0.5   // hysteresis: dips above this don't cancel the event
                     if (aboveSince == 0L) {
                         // not in an event: start one only on a sharp onset above the threshold
-                        if (lvl >= threshold && attackRatio >= minAttack) aboveSince = now
+                        if (lvl >= threshold && attackRatio >= minAttack) {
+                            aboveSince = now
+                            onsetSample = ring.written - n
+                        }
                     } else if (lvl < releaseLvl) {
                         // fell well below threshold: discard this candidate
                         aboveSince = 0L
@@ -1517,22 +1581,42 @@ class MainActivity : Activity() {
 
                     if (aboveSince != 0L && (now - aboveSince) >= sustainMs && now > suppressUntil) {
                         aboveSince = 0L
-                        val seqMs = if (responseMode == ResponseMode.MELODY) 4200L
-                            else (maxOf(strikeCount, 1) * (gapBase + gapRand + boomDecay * 1500 + 200)).toLong()
-                        suppressUntil = now + seqMs + cooldownMs
-                        triggerCount++
-                        runOnUiThread { countLbl.text = "Triggers: $triggerCount" }
-                        playResponse()
+                        barkCheck.onset(onsetSample)
                     }
                 }
             } catch (e: Exception) {
                 runOnUiThread { setState("mic error") }
-            } finally { try { rec.stop(); rec.release() } catch (_: Exception) {} }
+            } finally {
+                try { rec.stop(); rec.release() } catch (_: Exception) {}
+                // Runs after any window still queued, on the thread that owns the model.
+                scorer.execute {
+                    try { classifier?.close() } catch (_: Throwable) {}
+                    classifier = null
+                }
+                scorer.shutdown()
+            }
         }
+    }
+
+    // Plays the response and holds off new candidates until it and the cooldown end.
+    private fun respondToSound() {
+        val now = SystemClock.elapsedRealtime()
+        val seqMs = if (responseMode == ResponseMode.MELODY) 4200L
+            else (maxOf(strikeCount, 1) * (gapBase + gapRand + boomDecay * 1500 + 200)).toLong()
+        suppressUntil = now + seqMs + cooldownMs
+        triggerCount++
+        val count = triggerCount
+        runOnUiThread { countLbl.text = "Triggers: $count" }
+        playResponse()
+    }
+
+    private fun showLastSound(text: String) {
+        runOnUiThread { lastSoundLbl.text = text }
     }
 
     override fun onDestroy() {
         super.onDestroy(); playing = false; listening = false
+        listenSession?.set(false)
         stopKeepAlive()
     }
 }
