@@ -1,6 +1,7 @@
 package com.codeoptimus.barkresponder
 import android.Manifest
 import android.app.Activity
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.content.SharedPreferences
 import android.content.pm.PackageManager
@@ -8,6 +9,7 @@ import android.content.res.ColorStateList
 import android.graphics.Typeface
 import android.net.Uri
 import android.os.PowerManager
+import android.provider.DocumentsContract
 import android.provider.Settings
 import android.media.AudioAttributes
 import android.media.AudioFormat
@@ -30,7 +32,11 @@ import android.widget.ProgressBar
 import android.widget.ScrollView
 import android.widget.SeekBar
 import android.widget.TextView
+import android.widget.Toast
 import java.io.File
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -149,15 +155,18 @@ class MainActivity : Activity() {
     private lateinit var listenBtn: Button
     private lateinit var batteryLbl: TextView
     private lateinit var batteryBtn: Button
+    private lateinit var samplesBtn: Button
 
     // screens
     private lateinit var simpleScreen: ScrollView
     private lateinit var advancedScreen: ScrollView
+    private lateinit var samplesScreen: SamplesScreen
 
     // keep-alive: holds the CPU awake and keeps the Bluetooth A2DP link from sleeping
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var keepAlive = false
     private val KEEP_ALIVE_MS = 25_000L   // blip cadence, well under the ~30-60 s A2DP idle timeout
+    private val REQUEST_EXPORT = 2
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -596,6 +605,8 @@ class MainActivity : Activity() {
         trigCard.addView(batteryBtn)
         listenBtn = actionButton("Start listening") { toggleListen() }
         trigCard.addView(listenBtn)
+        samplesBtn = actionButton("Samples") { switchToSamples() }
+        trigCard.addView(samplesBtn)
         advRoot.addView(trigCard)
 
         advancedScreen = ScrollView(this).apply {
@@ -611,6 +622,17 @@ class MainActivity : Activity() {
         frameRoot.addView(advancedScreen, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
+        samplesScreen = SamplesScreen(
+            this, sampleStore, ownSounds,
+            saveClips = { saveClips },
+            setSaveClips = { on -> saveClips = on; saveSettings() },
+            onBack = { closeSamples() },
+            onExport = { startExport() },
+        )
+        frameRoot.addView(samplesScreen.view, FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
+        ))
+        updateSampleCount()
 
         setContentView(frameRoot)
     }
@@ -840,6 +862,76 @@ class MainActivity : Activity() {
             simpleScreen.fullScroll(ScrollView.FOCUS_UP)
         }
     }
+
+    private fun switchToSamples() {
+        advancedScreen.visibility = View.GONE
+        samplesScreen.view.visibility = View.VISIBLE
+        samplesScreen.reload()
+    }
+
+    private fun closeSamples() {
+        samplesScreen.stopPlayback()
+        samplesScreen.view.visibility = View.GONE
+        advancedScreen.visibility = View.VISIBLE
+        updateSampleCount()
+    }
+
+    // Runs on the classifier thread after each saved clip.
+    private fun onClipSaved() {
+        updateSampleCount()
+        runOnUiThread { if (samplesScreen.view.visibility == View.VISIBLE) samplesScreen.reload() }
+    }
+
+    private fun updateSampleCount() {
+        thread {
+            val n = try { sampleStore.list().size } catch (_: Exception) { 0 }
+            runOnUiThread { samplesBtn.text = "Samples ($n)" }
+        }
+    }
+
+    // ---------- export ----------
+    private fun startExport() {
+        thread {
+            val labelled = sampleStore.list().count { it.label != null }
+            runOnUiThread {
+                if (labelled == 0) {
+                    toast("Label some clips first: only labelled clips are exported.")
+                    return@runOnUiThread
+                }
+                val day = SimpleDateFormat("yyyyMMdd", Locale.US).format(Date())
+                val pick = Intent(Intent.ACTION_CREATE_DOCUMENT)
+                    .addCategory(Intent.CATEGORY_OPENABLE)
+                    .setType("application/zip")
+                    .putExtra(Intent.EXTRA_TITLE, "bark-samples-$day.zip")
+                try {
+                    startActivityForResult(pick, REQUEST_EXPORT)
+                } catch (_: ActivityNotFoundException) {
+                    toast("This device has no file picker to save the export.")
+                }
+            }
+        }
+    }
+
+    override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
+        super.onActivityResult(requestCode, resultCode, data)
+        if (requestCode != REQUEST_EXPORT || resultCode != RESULT_OK) return
+        val uri = data?.data ?: return
+        toast("Exporting…")
+        thread {
+            val msg = try {
+                val n = contentResolver.openOutputStream(uri, "wt")?.use { SampleExport.write(sampleStore, it) }
+                    ?: throw java.io.IOException("no output stream")
+                "Exported $n labelled ${if (n == 1) "clip" else "clips"}."
+            } catch (_: Exception) {
+                // Leave no half-written zip behind.
+                try { DocumentsContract.deleteDocument(contentResolver, uri) } catch (_: Exception) {}
+                "Export failed: the file could not be written there."
+            }
+            runOnUiThread { toast(msg) }
+        }
+    }
+
+    private fun toast(text: String) = Toast.makeText(this, text, Toast.LENGTH_LONG).show()
 
     // ---------- response mode toggle ----------
     private fun updateToggleButtons() {
@@ -1522,7 +1614,7 @@ class MainActivity : Activity() {
             }
             scorer.execute { try { loadedClassifier() } catch (_: Throwable) {} }
             val score = { window: ShortArray -> loadedClassifier().classify(Resampler.toModelInput(window)) }
-            val clips = ClipCapture(ring, { saveClips }, scorer, score, sampleStore, clipWriter)
+            val clips = ClipCapture(ring, { saveClips }, scorer, score, sampleStore, clipWriter, onSaved = { onClipSaved() })
             val barkCheck = BarkCheck(ring, { barkMinScore }, scorer, score, { active.get() }, clips) { respond, lastSound ->
                 if (respond) respondToSound()
                 showLastSound(lastSound)
@@ -1623,6 +1715,7 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         super.onDestroy(); playing = false; listening = false
+        samplesScreen.close()
         listenSession?.set(false)
         stopKeepAlive()
     }
