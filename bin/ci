@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
-# Runs every check CI would: JVM unit tests, Android lint, the debug APK and
-# the instrumented-test APK. Instrumented tests themselves need a device:
-# run bin/device-test with an arm64 or x86_64 device attached.
+# Runs every check CI would: JVM unit tests, Android lint, the debug APK,
+# the instrumented-test APK and the training script's tests. Instrumented
+# tests themselves need a device: run bin/device-test with an arm64 or x86_64
+# device attached. The training tests download YAMNet once (kagglehub caches
+# it) and build training/.venv from training/requirements.txt when missing.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -10,6 +12,18 @@ echo "java: $(java -version 2>&1 | head -1)"
 echo "AGP: $(grep -E '^agp' gradle/libs.versions.toml | cut -d'"' -f2)"
 echo "Kotlin plugin: $(grep -E '^kotlin =' gradle/libs.versions.toml | cut -d'"' -f2)"
 
+# Rebuild the training venv when requirements.txt changed since the last
+# install that finished, or when no install ever finished.
+py=training/.venv/bin/python
+stamp=training/.venv/requirements.sha256
+want=$(sha256sum training/requirements.txt | cut -d' ' -f1)
+if [ ! -x "$py" ] || [ "$(cat "$stamp" 2>/dev/null)" != "$want" ]; then
+  python3 -m venv training/.venv
+  "$py" -m pip install -q -r training/requirements.txt
+  echo "$want" > "$stamp"
+fi
+echo "training: $("$py" --version), $("$py" -m pip list 2>/dev/null | grep -E '^(tensorflow|kagglehub|ai-edge-litert) ' | tr -s ' ' | paste -sd, -)"
+
 ./gradlew --stacktrace testDebugUnitTest lintDebug assembleDebug assembleDebugAndroidTest
 
 # A suite that never ran reports no failures; count the tests that did.
@@ -17,3 +31,15 @@ results=app/build/test-results/testDebugUnitTest
 tests=$(cat "$results"/*.xml 2>/dev/null | grep -o '<testcase ' | wc -l)
 echo "unit tests run: $tests"
 if [ "$tests" -eq 0 ]; then echo "no unit tests ran" >&2; exit 1; fi
+
+# The training script's tests. A failure exits non-zero through pipefail;
+# count the test lines, since TensorFlow's log lines can split an "ok" off.
+mkdir -p tmp
+log=tmp/training-tests.log
+"$py" -m unittest discover -v -s training/tests 2>&1 | tee "$log"
+ran=$(grep -cE '^test_[A-Za-z0-9_]+ \(' "$log" || true)
+written=$(cat training/tests/test_*.py | grep -cE '^    def test_')
+echo "training tests run: $ran of $written"
+if [ "$ran" -eq 0 ] || [ "$ran" -ne "$written" ]; then
+  echo "training tests run ($ran) differ from those written ($written)" >&2; exit 1
+fi
