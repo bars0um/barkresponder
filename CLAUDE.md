@@ -6,8 +6,10 @@ barkresponder is an Android app written in Kotlin. We build the UI in code in
 `MainActivity.kt`. A YAMNet model, run through LiteRT, gates the response: the
 app answers only when the classifier hears a bark. The app also saves a
 2-second clip of each candidate sound with its scores, which the Samples
-screen plays, labels and exports for training. `training/train_head.py`
-turns that export into a model file that knows our dog's bark; see
+screen plays, labels and exports for training. Its Remote access switch, off
+at every app start, serves the same clips to a browser on the Wi-Fi at port
+8642, with no PIN (the owner's choice on #11). `training/train_head.py` turns
+that export into a model file that knows our dog's bark; see
 `training/README.md`. `bin/ci` runs the unit tests, lint, both APKs and the
 training tests.
 
