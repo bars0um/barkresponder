@@ -15,3 +15,11 @@
 .cxx
 local.properties
 /tmp
+training/.venv/
+training/out/
+training/data/
+__pycache__/
+*.zip
+# Clips hold voices from the house; the one tracked WAV is a CC0 test bark.
+*.wav
+!app/src/androidTest/assets/*.wav
