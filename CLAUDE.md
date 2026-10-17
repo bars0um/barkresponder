@@ -42,3 +42,21 @@ that feeds the WAV into the ring, as `ClipCaptureDeviceTest` does, and keep
 real barks for the owner's own hand check. Every clip the app saves while
 listening can hold voices from the house: delete test clips with Delete
 all before you hand the tablet back.
+
+### Measure the speaker through the VOICE_RECOGNITION source
+
+The tablet's plain MIC source runs noise suppression. On a 10-second Distract
+run it smeared the first 3 seconds of tones and dropped one second outright,
+which read as a playback gap. VOICE_RECOGNITION heard every second of the same
+run, 26 to 38 dB above the room, about 0.35 s after the player wrote it. Judge
+the room by its median 50 ms frame: the key that turns the screen off clicks
+into the lead-in and lifts a plain average about 3 times. The app's own trigger
+keeps MIC; this is for tests that check what the speaker played.
+
+### Other sessions share the tablet
+
+Two worktrees installed builds on the tablet within a minute of each other, and
+a test then ran against the other branch's app. Read `lastUpdateTime` from
+`adb shell dumpsys package com.codeoptimus.barkresponder` before and after a
+device run; if it moved, the run proves nothing. A tap by screen position also
+lands on a different button once a branch changes the layout.

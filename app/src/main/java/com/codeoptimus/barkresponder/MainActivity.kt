@@ -21,6 +21,7 @@ import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
+import android.util.Log
 import android.view.Gravity
 import android.view.View
 import android.view.WindowManager
@@ -48,7 +49,7 @@ import kotlin.math.pow
 import kotlin.math.sin
 import kotlin.math.sqrt
 
-enum class ResponseMode { IMPULSE, TONE, MELODY, GUNSHOT }
+enum class ResponseMode { IMPULSE, TONE, MELODY, GUNSHOT, DISTRACT }
 
 /**
  * Membrane driver with sound-triggered impulse.
@@ -106,6 +107,11 @@ class MainActivity : Activity() {
     @Volatile private var gsBoomTail = 0.45   // seconds, how long the low boom decays
     @Volatile private var gsChaos = 0.35      // 0..1, randomize pitch/level/tail per shot
 
+    // distract (run of high trills and chirps) settings
+    @Volatile private var distractSeconds = DistractSound.DEFAULT_SECONDS
+    @Volatile private var distractLowHz = DistractSound.DEFAULT_LOW_HZ
+    @Volatile private var distractHighHz = DistractSound.DEFAULT_HIGH_HZ
+
     // sound trigger (defaults tuned for bark detection)
     @Volatile private var listening = false
     @Volatile private var threshold = 20.0   // lower: bandpass narrows the band, selectivity does the discrimination
@@ -142,6 +148,7 @@ class MainActivity : Activity() {
     private lateinit var whistleToggleBtn: Button
     private lateinit var melodyToggleBtn: Button
     private lateinit var gunshotToggleBtn: Button
+    private lateinit var distractToggleBtn: Button
     private lateinit var verifyResultLbl: TextView
     private lateinit var freqSliderImpulse: SeekBar
     private lateinit var freqLblImpulse: TextView
@@ -287,7 +294,7 @@ class MainActivity : Activity() {
         // 8. "Response" section header
         sectionHeader(simpleRoot, "Response")
 
-        // 9. Type toggle — Impulse / Whistle / Melody
+        // 9. Type toggle — Impulse / Whistle / Melody / Gunshot / Distract
         val toggleRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
@@ -352,10 +359,23 @@ class MainActivity : Activity() {
             lp.marginEnd = 4.dp()
             layoutParams = lp
         }
+        distractToggleBtn = Button(this).apply {
+            text = "Distract"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            isAllCaps = false
+            setOnClickListener {
+                responseMode = ResponseMode.DISTRACT
+                updateToggleButtons()
+                saveSettings()
+            }
+            layoutParams = LinearLayout.LayoutParams(0, 48.dp(), 1f)
+        }
         toggleRow.addView(impToggleBtn)
         toggleRow.addView(whistleToggleBtn)
         toggleRow.addView(melodyToggleBtn)
         toggleRow.addView(gunshotToggleBtn)
+        toggleRow.addView(distractToggleBtn)
         simpleRoot.addView(toggleRow)
 
         // 10. Frequency slider — Impulse (Bark pitch)
@@ -551,6 +571,43 @@ class MainActivity : Activity() {
         gsCard.addView(actionButton("Test gunshot") { playGunshot(); flash("gunshot") })
         advRoot.addView(gsCard)
 
+        // ---- Distract ----
+        val dCard = card()
+        sectionHeader(dCard, "Distract (high trills and chirps)")
+        val dlLbl = settingLabel(dCard, "Length: $distractSeconds s",
+            "How long each run of sounds plays after a bark.")
+        dCard.addView(slider(DistractSound.MIN_SECONDS, DistractSound.MAX_SECONDS, distractSeconds) { v ->
+            distractSeconds = v; dlLbl.text = "Length: $v s"; saveSettings()
+        })
+        val dloLbl = settingLabel(dCard, "Lowest pitch: ${"%,d".format(distractLowHz)} Hz",
+            "The deepest sound in a run. The range always spans at least 1,000 Hz.")
+        val dhiLbl = settingLabel(dCard, "Highest pitch: ${"%,d".format(distractHighHz)} Hz",
+            "The highest sound in a run. It stops at 8,000 Hz: tablet speakers play little above it.")
+        lateinit var dHiSlider: SeekBar
+        val dLoSlider = slider(DistractSound.MIN_HZ, DistractSound.MAX_HZ - DistractSound.MIN_SPAN_HZ, distractLowHz) { v ->
+            distractLowHz = v
+            dloLbl.text = "Lowest pitch: ${"%,d".format(v)} Hz"
+            // keep the range at least MIN_SPAN_HZ wide by pushing the top up
+            if (distractHighHz < v + DistractSound.MIN_SPAN_HZ) dHiSlider.progress = v + DistractSound.MIN_SPAN_HZ - DistractSound.MIN_HZ
+            saveSettings()
+        }
+        dHiSlider = slider(DistractSound.MIN_HZ, DistractSound.MAX_HZ, distractHighHz) { v ->
+            // keep the range at least MIN_SPAN_HZ wide: snap the thumb back to the floor
+            val floor = distractLowHz + DistractSound.MIN_SPAN_HZ
+            if (v < floor) {
+                dHiSlider.progress = floor - DistractSound.MIN_HZ
+            } else {
+                distractHighHz = v
+                dhiLbl.text = "Highest pitch: ${"%,d".format(v)} Hz"
+                saveSettings()
+            }
+        }
+        // Each slider sits under its own label.
+        dCard.addView(dLoSlider, dCard.indexOfChild(dloLbl) + 2)
+        dCard.addView(dHiSlider)
+        dCard.addView(actionButton("Test distract") { playDistract(); flash("distract") })
+        advRoot.addView(dCard)
+
         // ---- Impulse ----
         val impCard = card()
         sectionHeader(impCard, "Impulse (drives the membrane)")
@@ -673,10 +730,16 @@ class MainActivity : Activity() {
         gsBoomFreq   = prefs.getFloat("gsBoomFreq", 50.0f).toDouble()
         gsBoomTail   = prefs.getFloat("gsBoomTail", 0.45f).toDouble()
         gsChaos      = prefs.getFloat("gsChaos", 0.35f).toDouble()
+        distractSeconds = DistractSound.seconds(prefs.getInt("distractSeconds", DistractSound.DEFAULT_SECONDS))
+        distractLowHz   = prefs.getInt("distractLowHz", DistractSound.DEFAULT_LOW_HZ)
+        distractHighHz  = prefs.getInt("distractHighHz", DistractSound.DEFAULT_HIGH_HZ)
+        distractLowHz   = DistractSound.lowHz(distractLowHz)
+        distractHighHz  = DistractSound.highHz(distractLowHz, distractHighHz)
         responseMode = when (prefs.getString("responseMode", "IMPULSE")) {
             "TONE"     -> ResponseMode.TONE
             "MELODY"   -> ResponseMode.MELODY
             "GUNSHOT"  -> ResponseMode.GUNSHOT
+            "DISTRACT" -> ResponseMode.DISTRACT
             else       -> ResponseMode.IMPULSE
         }
     }
@@ -711,6 +774,9 @@ class MainActivity : Activity() {
             putFloat("gsBoomFreq", gsBoomFreq.toFloat())
             putFloat("gsBoomTail", gsBoomTail.toFloat())
             putFloat("gsChaos", gsChaos.toFloat())
+            putInt("distractSeconds", distractSeconds)
+            putInt("distractLowHz", distractLowHz)
+            putInt("distractHighHz", distractHighHz)
             putString("responseMode", responseMode.name)
             apply()
         }
@@ -970,12 +1036,13 @@ class MainActivity : Activity() {
     // ---------- response mode toggle ----------
     private fun updateToggleButtons() {
         // selected = accent button; unselected = card background
-        for (b in listOf(impToggleBtn, whistleToggleBtn, melodyToggleBtn, gunshotToggleBtn)) {
+        for (b in listOf(impToggleBtn, whistleToggleBtn, melodyToggleBtn, gunshotToggleBtn, distractToggleBtn)) {
             val sel = when {
                 b === impToggleBtn -> responseMode == ResponseMode.IMPULSE
                 b === whistleToggleBtn -> responseMode == ResponseMode.TONE
                 b === melodyToggleBtn -> responseMode == ResponseMode.MELODY
-                else -> responseMode == ResponseMode.GUNSHOT
+                b === gunshotToggleBtn -> responseMode == ResponseMode.GUNSHOT
+                else -> responseMode == ResponseMode.DISTRACT
             }
             if (sel) {
                 b.setBackgroundResource(R.drawable.btn_bg)
@@ -986,7 +1053,7 @@ class MainActivity : Activity() {
             }
         }
         // Impulse has its own pitch slider; Whistle and Melody both use the
-        // whistle frequency; Gunshot has its own card so nothing to show.
+        // whistle frequency; Gunshot and Distract have their own cards so nothing to show.
         val showImpulse = responseMode == ResponseMode.IMPULSE
         val showTone = responseMode == ResponseMode.TONE || responseMode == ResponseMode.MELODY
         freqSliderImpulse.visibility = if (showImpulse) View.VISIBLE else View.GONE
@@ -1003,6 +1070,7 @@ class MainActivity : Activity() {
             ResponseMode.TONE -> playToneBurst()
             ResponseMode.MELODY -> playMelody()
             ResponseMode.GUNSHOT -> playGunshot()
+            ResponseMode.DISTRACT -> playDistract()
         }
     }
 
@@ -1012,6 +1080,7 @@ class MainActivity : Activity() {
         ResponseMode.TONE -> "tone"
         ResponseMode.MELODY -> "melody"
         ResponseMode.GUNSHOT -> "gunshot"
+        ResponseMode.DISTRACT -> "distract"
     }
 
     // ---------- listen button sync ----------
@@ -1432,69 +1501,35 @@ class MainActivity : Activity() {
     }
 
     // ---------- one-shot melody (jingle) ----------
-    //
-    // Plays a fixed, recognizable tune ("Ode to Joy") anchored on the current
-    // whistle frequency. Each note is a whole-number of semitones away from the
-    // center, so the melody keeps its shape no matter where the whistle slider
-    // is — the notes simply spread out symmetrically around that center, staying
-    // near the range the user has chosen.
     private fun playMelody() {
-        // (semitones relative to center, duration in 8th-note units)
-        val notes = intArrayOf(
-            4, 4, 5, 7, 7, 5, 4, 2,   // E E F G G F E D
-            0, 0, 2, 4, 4, 2, 2        // C C D E E D D
-        )
-        val durs = intArrayOf(
-            1, 1, 1, 1, 1, 1, 2, 1,   // last E held a beat
-            1, 1, 1, 2, 1, 1, 2        // phrases end on 2-beat notes
-        )
-        val center = toneFreq
-        val unitSec = 0.22                 // one 8th note
-        val restSec = 0.04                 // short gap between notes
-        val noteSecs = durs.map { it * unitSec }
-        val totalSec = noteSecs.sum() + (notes.size - 1) * restSec + 0.15
-
-        val n = (totalSec * sampleRate).toInt()
-        val s = ShortArray(n)
-        var tCursor = 0.0
-        for (k in notes.indices) {
-            val f = center * 2.0.pow(notes[k] / 12.0)
-            val dur = noteSecs[k]
-            val attack = 0.01
-            val release = 0.08
-            for (i in 0 until (dur * sampleRate).toInt()) {
-                val gi = (tCursor.toLong() + i).toInt() // global sample index
-                if (gi >= n) break
-                val t = i.toDouble() / sampleRate
-                val env = when {
-                    t < attack -> t / attack
-                    t > dur - release -> (dur - t) / release
-                    else -> 1.0
-                }
-                // fundamental + a light 2nd harmonic for a whistly timbre
-                val wave = sin(TAU * f * t) + 0.25 * sin(2.0 * TAU * f * t)
-                s[gi] = (wave * env * amp * 0.72 * Short.MAX_VALUE / 1.25).toInt().toShort()
-            }
-            tCursor += (dur * sampleRate).toLong() + (restSec * sampleRate).toLong()
-        }
-
+        val s = Melody.render(toneFreq, amp, sampleRate)
         thread {
             ownSounds.incrementAndGet()
             try {
-                val minBytes = AudioTrack.getMinBufferSize(
-                    sampleRate, AudioFormat.CHANNEL_OUT_MONO, AudioFormat.ENCODING_PCM_16BIT
-                )
-                val track = AudioTrack(
-                    AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_MEDIA)
-                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build(),
-                    AudioFormat.Builder().setSampleRate(sampleRate)
-                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT)
-                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build(),
-                    maxOf(minBytes, s.size * 2), AudioTrack.MODE_STATIC, AudioManager.AUDIO_SESSION_ID_GENERATE
-                )
-                track.write(s, 0, s.size)
-                track.play()
-                Thread.sleep((totalSec * 1000).toLong() + 100)
+                PcmPlayer.play(s, sampleRate)
+            } catch (t: Throwable) {
+                // An audio error (no free player, say) skips this melody instead of killing the app.
+                Log.w("MainActivity", "melody did not play", t)
+            } finally {
+                Thread.sleep(150)
+                ownSounds.decrementAndGet()
+            }
+        }
+    }
+
+    // ---------- one-shot distract (run of trills and chirps) ----------
+    // A new seed each time, so the order and pitches change on every bark.
+    // Rendered on the playback thread: a 10 s run must not hold up the mic or the screen.
+    private fun playDistract() {
+        val seed = Random.nextLong()
+        val seconds = distractSeconds; val low = distractLowHz; val high = distractHighHz; val level = amp
+        thread {
+            ownSounds.incrementAndGet()
+            try {
+                PcmPlayer.play(DistractSound.render(seed, seconds, low, high, level, sampleRate), sampleRate)
+            } catch (t: Throwable) {
+                // An audio error (no free player, say) skips this run instead of killing the app.
+                Log.w("MainActivity", "distract run did not play", t)
             } finally {
                 Thread.sleep(150)
                 ownSounds.decrementAndGet()
@@ -1739,8 +1774,8 @@ class MainActivity : Activity() {
     // Plays the response and holds off new candidates until it and the cooldown end.
     private fun respondToSound() {
         val now = SystemClock.elapsedRealtime()
-        val seqMs = if (responseMode == ResponseMode.MELODY) 4200L
-            else (maxOf(strikeCount, 1) * (gapBase + gapRand + boomDecay * 1500 + 200)).toLong()
+        val impulseMs = (maxOf(strikeCount, 1) * (gapBase + gapRand + boomDecay * 1500 + 200)).toLong()
+        val seqMs = ResponseTiming.lengthMs(responseMode, impulseMs, distractSeconds)
         suppressUntil = now + seqMs + cooldownMs
         triggerCount++
         val count = triggerCount
