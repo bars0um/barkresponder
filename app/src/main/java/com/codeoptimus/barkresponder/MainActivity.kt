@@ -174,6 +174,8 @@ class MainActivity : Activity() {
     @Volatile private var keepAlive = false
     private val KEEP_ALIVE_MS = 25_000L   // blip cadence, well under the ~30-60 s A2DP idle timeout
     private val REQUEST_EXPORT = 2
+    private val REQUEST_LOCAL_NETWORK = 3
+    private val ANDROID_17 = 37
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -685,7 +687,11 @@ class MainActivity : Activity() {
             setSaveClips = { on -> saveClips = on; saveSettings() },
             onBack = { closeSamples() },
             onExport = { startExport() },
+            setRemote = { on -> setRemoteAccess(on) },
         )
+        samplesScreen.showRemote(RemoteAccess.state)
+        RemoteAccess.listener = remoteListener
+        RemoteAccess.onClipsChanged = clipsChangedRemotely
         frameRoot.addView(samplesScreen.view, FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT
         ))
@@ -953,6 +959,34 @@ class MainActivity : Activity() {
             val n = try { sampleStore.list().size } catch (_: Exception) { 0 }
             runOnUiThread { samplesBtn.text = "Samples ($n)" }
         }
+    }
+
+    // ---------- remote access ----------
+    private val remoteListener: (RemoteAccess.State) -> Unit = { state ->
+        samplesScreen.showRemote(state)
+        if (state is RemoteAccess.State.Failed) toast(state.message)
+    }
+    private val clipsChangedRemotely: () -> Unit = { onClipSaved() }
+
+    private fun setRemoteAccess(on: Boolean) {
+        if (!on) {
+            RemoteAccess.stop()
+            return
+        }
+        // Android 17 blocks incoming connections from the local network without this.
+        if (android.os.Build.VERSION.SDK_INT >= ANDROID_17 &&
+            checkSelfPermission(Manifest.permission.ACCESS_LOCAL_NETWORK) != PackageManager.PERMISSION_GRANTED
+        ) {
+            requestPermissions(arrayOf(Manifest.permission.ACCESS_LOCAL_NETWORK), REQUEST_LOCAL_NETWORK)
+            return
+        }
+        val page = try {
+            assets.open("web/index.html").use { it.readBytes() }
+        } catch (_: java.io.IOException) {
+            samplesScreen.showRemote(RemoteAccess.State.Failed("The web page is missing from this build."))
+            return
+        }
+        RemoteAccess.start(this, sampleStore, page)
     }
 
     // ---------- export ----------
@@ -1609,6 +1643,11 @@ class MainActivity : Activity() {
     }
     override fun onRequestPermissionsResult(rc: Int, p: Array<out String>, r: IntArray) {
         super.onRequestPermissionsResult(rc, p, r)
+        if (rc == REQUEST_LOCAL_NETWORK) {
+            if (r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) setRemoteAccess(true)
+            else samplesScreen.showRemote(RemoteAccess.State.Failed("Remote access needs the nearby devices permission."))
+            return
+        }
         if (rc == 1 && r.isNotEmpty() && r[0] == PackageManager.PERMISSION_GRANTED) startListen()
         else setState("mic permission denied")
     }
@@ -1751,6 +1790,10 @@ class MainActivity : Activity() {
     override fun onDestroy() {
         super.onDestroy(); playing = false; listening = false
         samplesScreen.close()
+        if (RemoteAccess.listener === remoteListener) RemoteAccess.listener = null
+        if (RemoteAccess.onClipsChanged === clipsChangedRemotely) RemoteAccess.onClipsChanged = null
+        // A rotation keeps the server; leaving the app turns it off.
+        if (isFinishing) RemoteAccess.stop()
         listenSession?.set(false)
         stopKeepAlive()
     }

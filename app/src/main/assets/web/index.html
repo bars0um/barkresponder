@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bark Responder samples</title>
+<style>
+  :root {
+    --bg: #f6f5f1; --card: #ffffff; --text: #1c1c1a; --muted: #5f5f58; --hint: #8a8a82;
+    --line: #e2e1db; --accent: #1f6b3a; --accent-text: #ffffff; --bad: #a32b2b; --chip: #edf6f0;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #151614; --card: #1f201d; --text: #ecebe6; --muted: #b4b3ab; --hint: #85847c;
+      --line: #33342f; --accent: #5fbf80; --accent-text: #0d1a12; --bad: #e07a7a; --chip: #1c2b21;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+         font: 15px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 980px; margin: 0 auto; padding: 24px 16px 40px; }
+  h1 { font-size: 22px; margin: 0; }
+  header { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 8px; }
+  #summary { color: var(--muted); }
+  .bar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between;
+         gap: 12px; margin: 16px 0 12px; }
+  label.filter { display: inline-flex; align-items: center; gap: 8px; cursor: pointer; }
+  button { font: inherit; border: 1px solid var(--line); background: var(--card); color: var(--text);
+           border-radius: 8px; padding: 6px 12px; cursor: pointer; }
+  button:hover { border-color: var(--muted); }
+  button.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); font-weight: 600; }
+  button.on { background: var(--chip); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .5; cursor: default; }
+  ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
+  li { display: grid; grid-template-columns: 12em 6em 6.5em 5.5em 1fr; align-items: center; gap: 8px;
+       padding: 10px 4px; border-bottom: 1px solid var(--line); }
+  .time { white-space: nowrap; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .score { font-variant-numeric: tabular-nums; color: var(--muted); }
+  .responded { color: var(--accent); font-weight: 600; }
+  .ignored, .none { color: var(--hint); }
+  .actions { display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end; }
+  #empty, #error { color: var(--hint); padding: 24px 4px; }
+  #error { color: var(--bad); }
+  footer { color: var(--hint); font-size: 13px; margin-top: 16px; }
+  @media (max-width: 720px) {
+    li { grid-template-columns: 1fr auto; row-gap: 4px; }
+    .time { grid-column: 1; grid-row: 1; }
+    .lbl { grid-column: 2; grid-row: 1; text-align: right; }
+    .score { grid-column: 1; grid-row: 2; }
+    .state { grid-column: 2; grid-row: 2; text-align: right; }
+    .actions { grid-column: 1 / -1; grid-row: 3; justify-content: flex-start; }
+  }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <h1>Bark Responder samples</h1>
+    <span id="summary">Loading clips…</span>
+  </header>
+  <div class="bar">
+    <label class="filter"><input type="checkbox" id="respondedOnly"> Responded only</label>
+    <button class="primary" id="download">Download labelled zip</button>
+  </div>
+  <div id="error" hidden></div>
+  <ul id="clips"></ul>
+  <div id="empty" hidden></div>
+  <footer>Clips play on this computer. If it sits near the tablet, the app may hear them.</footer>
+</main>
+<script>
+"use strict";
+let clips = [];
+let player = null, playingId = null;
+const $ = (id) => document.getElementById(id);
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function showError(text) {
+  $("error").textContent = text;
+  $("error").hidden = !text;
+}
+
+async function call(method, path, body) {
+  const init = { method, cache: "no-store" };
+  if (body !== undefined) { init.body = JSON.stringify(body); init.headers = { "Content-Type": "application/json" }; }
+  let r;
+  try { r = await fetch(path, init); } catch (e) {
+    throw new Error("The tablet does not answer. Is Remote access still on?");
+  }
+  if (!r.ok) throw new Error((await r.text()).trim() || ("The tablet answered " + r.status + "."));
+  return r;
+}
+
+const fmt = new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit", second: "2-digit" });
+
+async function load() {
+  try {
+    const r = await call("GET", "/api/clips");
+    clips = (await r.json()).clips;
+    showError("");
+    render();
+  } catch (e) { showError(e.message); }
+}
+
+function render() {
+  const bark = clips.filter(c => c.label === "bark").length;
+  const notBark = clips.filter(c => c.label === "not_bark").length;
+  $("summary").textContent = clips.length + (clips.length === 1 ? " clip, " : " clips, ") + bark + " bark, " + notBark + " not bark";
+  $("download").disabled = bark + notBark === 0;
+  const shown = $("respondedOnly").checked ? clips.filter(c => c.responded) : clips;
+  const list = $("clips");
+  list.replaceChildren(...shown.map(row));
+  $("empty").hidden = shown.length > 0;
+  $("empty").textContent = clips.length === 0
+    ? "No clips yet. Each loud sound the app hears while listening is saved on the tablet."
+    : "No clips the app responded to.";
+}
+
+function row(c) {
+  const li = el("li");
+  li.append(el("span", "time", fmt.format(new Date(c.recordedAt))));
+  li.append(el("span", "score", "bark " + c.barkScore.toFixed(2)));
+  li.append(el("span", "state " + (c.responded ? "responded" : "ignored"), c.responded ? "responded" : "ignored"));
+  li.append(el("span", "lbl " + (c.label ? "" : "none"), c.label === "bark" ? "Bark" : c.label === "not_bark" ? "Not bark" : "-"));
+  const actions = el("span", "actions");
+  const play = el("button", playingId === c.id ? "on" : "", playingId === c.id ? "Stop" : "Play");
+  play.onclick = () => togglePlay(c.id);
+  const bark = el("button", c.label === "bark" ? "on" : "", "Bark");
+  bark.onclick = () => setLabel(c, "bark");
+  const notBark = el("button", c.label === "not_bark" ? "on" : "", "Not bark");
+  notBark.onclick = () => setLabel(c, "not_bark");
+  const del = el("button", "danger", "Delete");
+  del.onclick = () => remove(c);
+  actions.append(play, bark, notBark, del);
+  li.append(actions);
+  return li;
+}
+
+function stopPlay() {
+  if (player) { player.onended = player.onerror = null; player.pause(); player = null; }
+  playingId = null;
+}
+
+// play() runs inside the click, so Safari and Chrome count it as the user's own.
+function togglePlay(id) {
+  const was = playingId;
+  stopPlay();
+  if (was !== id) {
+    const p = new Audio("/api/clips/" + id + ".wav");
+    player = p;
+    playingId = id;
+    const done = () => { if (player === p) { stopPlay(); render(); } };
+    p.onended = done;
+    p.onerror = () => { done(); showError("This clip did not play. Is Remote access still on?"); };
+    p.play().catch(e => { if (e.name !== "AbortError") { done(); showError("This clip did not play: " + e.message); } });
+  }
+  render();
+}
+
+async function setLabel(c, label) {
+  const next = c.label === label ? null : label; // clicking the set label clears it
+  try {
+    await call("POST", "/api/clips/" + c.id + "/label", { label: next });
+    c.label = next;
+    showError("");
+    render();
+  } catch (e) { showError(e.message); load(); }
+}
+
+async function remove(c) {
+  if (!confirm("Delete this clip from the tablet? You can't undo this.")) return;
+  if (playingId === c.id) stopPlay();
+  try {
+    await call("DELETE", "/api/clips/" + c.id);
+    clips = clips.filter(x => x.id !== c.id);
+    showError("");
+    render();
+  } catch (e) { showError(e.message); load(); }
+}
+
+async function download() {
+  const button = $("download");
+  button.disabled = true;
+  button.textContent = "Preparing zip…";
+  try {
+    const blob = await (await call("GET", "/api/export.zip")).blob();
+    const d = new Date();
+    const day = d.getFullYear() + String(d.getMonth() + 1).padStart(2, "0") + String(d.getDate()).padStart(2, "0");
+    const a = el("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "bark-samples-" + day + ".zip";
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 60000);
+    showError("");
+  } catch (e) {
+    showError(e instanceof TypeError ? "The download stopped before the end. Try again." : e.message);
+  } finally {
+    button.textContent = "Download labelled zip";
+    render();
+  }
+}
+
+$("respondedOnly").onchange = render;
+$("download").onclick = download;
+load();
+</script>
+</body>
+</html>
