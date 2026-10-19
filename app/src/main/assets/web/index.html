@@ -32,6 +32,9 @@
   button.on { background: var(--chip); border-color: var(--accent); color: var(--accent); font-weight: 600; }
   button.danger { color: var(--bad); }
   button:disabled { opacity: .5; cursor: default; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 12px 0; }
+  .pager .range { color: var(--muted); font-variant-numeric: tabular-nums; text-align: center; flex: 1; }
+  .pager[hidden] { display: none; }
   ul { list-style: none; margin: 0; padding: 0; border-top: 1px solid var(--line); }
   li { display: grid; grid-template-columns: 12em 6em 6.5em 5.5em 1fr; align-items: center; gap: 8px;
        padding: 10px 4px; border-bottom: 1px solid var(--line); }
@@ -64,13 +67,17 @@
     <button class="primary" id="download">Download labelled zip</button>
   </div>
   <div id="error" hidden></div>
+  <div class="pager" id="pagerTop" hidden></div>
   <ul id="clips"></ul>
+  <div class="pager" id="pagerBottom" hidden></div>
   <div id="empty" hidden></div>
   <footer>Clips play on this computer. If it sits near the tablet, the app may hear them.</footer>
 </main>
 <script>
 "use strict";
+const PAGE_SIZE = 50;
 let clips = [];
+let page = 0; // zero-based
 let player = null, playingId = null;
 const $ = (id) => document.getElementById(id);
 
@@ -114,12 +121,35 @@ function render() {
   $("summary").textContent = clips.length + (clips.length === 1 ? " clip, " : " clips, ") + bark + " bark, " + notBark + " not bark";
   $("download").disabled = bark + notBark === 0;
   const shown = $("respondedOnly").checked ? clips.filter(c => c.responded) : clips;
+  const pages = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  page = Math.min(page, pages - 1); // a delete can empty the last page
+  const first = page * PAGE_SIZE;
+  const visible = shown.slice(first, first + PAGE_SIZE);
   const list = $("clips");
-  list.replaceChildren(...shown.map(row));
+  list.replaceChildren(...visible.map(row));
+  for (const id of ["pagerTop", "pagerBottom"]) fillPager($(id), pages, first, visible.length, shown.length);
   $("empty").hidden = shown.length > 0;
   $("empty").textContent = clips.length === 0
     ? "No clips yet. Each loud sound the app hears while listening is saved on the tablet."
     : "No clips the app responded to.";
+}
+
+function fillPager(box, pages, first, count, total) {
+  box.hidden = pages < 2;
+  const prev = el("button", "prev", "Previous");
+  prev.disabled = page === 0;
+  prev.onclick = () => goTo(page - 1);
+  const next = el("button", "next", "Next");
+  next.disabled = page >= pages - 1;
+  next.onclick = () => goTo(page + 1);
+  box.replaceChildren(prev, el("span", "range", (first + 1) + " to " + (first + count) + " of " + total), next);
+}
+
+function goTo(n) {
+  stopPlay(); // its row leaves the screen, and so does its Stop button
+  page = n;
+  render();
+  window.scrollTo(0, 0);
 }
 
 function row(c) {
@@ -208,7 +238,7 @@ async function download() {
   }
 }
 
-$("respondedOnly").onchange = render;
+$("respondedOnly").onchange = () => { stopPlay(); page = 0; render(); };
 $("download").onclick = download;
 load();
 </script>

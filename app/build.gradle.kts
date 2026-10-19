@@ -53,3 +53,7 @@ dependencies {
     debugImplementation(libs.androidx.compose.ui.test.manifest)
     debugImplementation(libs.androidx.compose.ui.tooling)
 }
+// The web page tests read the page from disk; without this, a page edit leaves them "up to date".
+tasks.withType<Test>().configureEach {
+    inputs.dir("src/main/assets/web")
+}
